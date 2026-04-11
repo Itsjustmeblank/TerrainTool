@@ -1,0 +1,205 @@
+import maya.api.OpenMaya as om
+import maya.cmds as cmds
+import math
+
+
+class TerrainTool:
+
+
+    def __init__(self):
+        self.feature_type = "mountain"          #"mountain", "valley", +???
+
+
+        self.center_x = 0.0                     #how to change for easy selection?
+        self.center_z = 0.0
+
+
+        self.radius = 5.0
+        self.intensity = 3.0
+
+
+        self.noise_strength = 0.5               #0 = none
+
+
+        self.original_vertices = None           #backup so reset is possible
+
+
+
+
+    def get_selected_mesh(self):
+        sel = om.MGlobal.getActiveSelectionList()
+
+
+        if sel.length() == 0:
+            om.MGlobal.displayError("Select a mesh.")
+            return None
+
+
+        dag = sel.getDagPath(0)
+        dag.extendToShape()                     #shape node
+
+
+        return om.MFnMesh(dag)
+
+
+
+
+    def get_vertices(self, mesh_fn):
+        return mesh_fn.getPoints(om.MSpace.kWorld)
+
+
+
+
+    def compute_distance(self, v):
+        dx = v.x - self.center_x
+        dz = v.z - self.center_z
+        return math.sqrt(dx * dx + dz * dz)
+
+
+
+
+    def compute_falloff(self, distance):
+        t = distance / self.radius
+
+
+        if t >= 1.0:
+            return 0.0
+
+
+       
+        return 1 - (3 * t**2 - 2 * t**3)       #smoothstep falloff
+
+
+
+
+    def sample_noise(self, x, z):
+        return math.sin(x * 0.3) * math.cos(z * 0.3)
+
+
+
+
+    def apply_mountain(self, v, dist):
+        falloff = self.compute_falloff(dist)
+
+
+        height = falloff * self.intensity
+
+
+        n = self.sample_noise(v.x, v.z)
+        height += n * self.noise_strength * falloff
+
+
+        return v.y + height
+
+
+
+
+    def apply_valley(self, v, dist):
+        falloff = self.compute_falloff(dist)
+
+
+        depth = falloff * self.intensity
+
+
+        n = self.sample_noise(v.x, v.z)
+        depth += n * self.noise_strength * falloff
+
+
+        return v.y - depth
+
+
+
+
+    def apply_feature(self, v, dist):
+        if self.feature_type == "mountain":
+            return self.apply_mountain(v, dist)
+
+
+        elif self.feature_type == "valley":
+            return self.apply_valley(v, dist)
+
+
+        return v.y
+
+
+
+
+    def modify_vertices(self, vertices):
+        new_verts = []
+
+
+        for v in vertices:
+            dist = self.compute_distance(v)
+
+
+            if dist <= self.radius:
+                v.y = self.apply_feature(v, dist)
+
+
+            new_verts.append(v)
+
+
+        return new_verts
+
+
+   
+    def update_mesh(self, mesh_fn, vertices):
+        mesh_fn.setPoints(vertices, om.MSpace.kWorld)
+
+
+
+
+    def run(self):
+        mesh_fn = self.get_selected_mesh()
+        if not mesh_fn:
+            return
+
+
+        verts = self.get_vertices(mesh_fn)
+
+
+        # Store original ONCE
+        if self.original_vertices is None:
+            self.original_vertices = [om.MPoint(v) for v in verts]
+
+
+        new_verts = self.modify_vertices(verts)
+
+
+        self.update_mesh(mesh_fn, new_verts)
+
+
+        om.MGlobal.displayInfo("Terrain applied.")
+
+
+
+
+    def reset(self):
+        mesh_fn = self.get_selected_mesh()
+        if not mesh_fn or not self.original_vertices:
+            return
+
+
+        mesh_fn.setPoints(self.original_vertices, om.MSpace.kWorld)
+        om.MGlobal.displayInfo("Terrain reset.")
+
+
+
+
+
+
+tool = TerrainTool()        #UI widgets start
+
+
+def apply_mountain():
+    tool.feature_type = "mountain"
+    tool.run()
+
+
+def apply_valley():
+    tool.feature_type = "valley"
+    tool.run()
+
+
+def reset_terrain():
+    tool.reset()
